@@ -4,7 +4,7 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const moment = require('moment');
-const AWS = require('aws-sdk-promise');
+const AWS = require('aws-sdk');
 const batchPromises = require('batch-promises');
 // AWS variable has default credentials from Shared Credentials File or Environment Variables.
 //   (see: https://docs.aws.amazon.com/AWSJavaScriptSDK/guide/node-configuring.html)
@@ -27,6 +27,8 @@ const staticClusterDataProvider = require('./staticClusterDataProvider.js');
 
 const ecs = new AWS.ECS();
 const ec2 = new AWS.EC2();
+// helper to tolerate old aws-sdk-promise `.data` wrapping
+const safe = (obj, key) => (obj && (obj[key] || (obj.data && obj.data[key])));
 
 /* Home page */
 
@@ -183,7 +185,7 @@ function populateClusterStateWithInstanceSummaries(cluster) {
       });
     } else {
       const containerInstances = describeContainerInstancesResponses.reduce(function (acc, current) {
-        return acc.concat(current.data.containerInstances);
+        return acc.concat(safe(current, 'containerInstances') || []);
       }, []);
       const ec2instanceIds = containerInstances.map(function (i) {
         return i.ec2InstanceId;
@@ -191,9 +193,7 @@ function populateClusterStateWithInstanceSummaries(cluster) {
       console.log(`Found ${ec2instanceIds.length} ec2InstanceIds for cluster '${cluster}': ${ec2instanceIds}`);
       return ec2.describeInstances({InstanceIds: ec2instanceIds}).promise()
       .then(function (ec2Instances) {
-        const instances = [].concat.apply([], ec2Instances.data.Reservations.map(function (r) {
-          return r.Instances
-        }));
+        const instances = [].concat.apply([], (safe(ec2Instances, 'Reservations') || []).map(r => r.Instances));
         const privateIpAddresses = instances.map(function (i) {
           return i.PrivateIpAddress
         });
@@ -266,8 +266,8 @@ function listContainerInstanceWithToken(cluster, token, instanceArns) {
   debugLog("Calling ecs.listContainerInstances...");
   return ecs.listContainerInstances(params).promise()
     .then(function (listContainerInstanceResponse) {
-      const containerInstanceArns = instanceArns.concat(listContainerInstanceResponse.data.containerInstanceArns);
-      const nextToken = listContainerInstanceResponse.data.nextToken;
+      const containerInstanceArns = instanceArns.concat(safe(listContainerInstanceResponse, 'containerInstanceArns') || []);
+      const nextToken = safe(listContainerInstanceResponse, 'nextToken');
       if (containerInstanceArns.length === 0) {
         return [];
       } else if (nextToken) {
@@ -299,9 +299,10 @@ function listTasksWithToken(cluster, token, tasks) {
   return ecs.listTasks(params).promise()
     .then(promiseDelayer.delay(config.aws.apiDelay))
     .then(function (tasksResponse) {
-      debugLog(`\t\tReceived tasksResponse with ${tasksResponse.data.taskArns.length} Task ARNs`);
-      const taskArns = tasks.concat(tasksResponse.data.taskArns);
-      const nextToken = tasksResponse.data.nextToken;
+      const taskArnsPage = safe(tasksResponse, 'taskArns') || [];
+      debugLog(`\t\tReceived tasksResponse with ${taskArnsPage.length} Task ARNs`);
+      const taskArns = tasks.concat(taskArnsPage);
+      const nextToken = safe(tasksResponse, 'nextToken');
       if (taskArns.length === 0) {
         return [];
       } else if (nextToken) {
@@ -342,7 +343,7 @@ function getTasksWithTaskDefinitions(cluster) {
       })
       .then(function (describeTasksResponses) {
         tasksArray = describeTasksResponses.reduce(function (acc, current) {
-          return acc.concat(current.data.tasks);
+          return acc.concat(safe(current, 'tasks') || []);
         }, []);
         console.log(`Found ${tasksArray.length} tasks for cluster '${cluster}'`);
         // Wait for the responses from maxSimultaneousDescribeTaskDefinitionCalls describeTaskDefinition calls before invoking another maxSimultaneousDescribeTaskDefinitionCalls calls
@@ -374,10 +375,10 @@ function getTasksWithTaskDefinitions(cluster) {
         taskDefs.forEach(function (taskDef) {
           tasksArray
             .filter(function (t) {
-              return t["taskDefinitionArn"] === taskDef.data.taskDefinition.taskDefinitionArn;
+              return t.taskDefinitionArn === safe(taskDef, 'taskDefinition')?.taskDefinitionArn;
             })
             .forEach(function (t) {
-              t["taskDefinition"] = taskDef.data.taskDefinition;
+              t.taskDefinition = safe(taskDef, 'taskDefinition');
             });
         });
         resolve(tasksArray);
