@@ -30,6 +30,21 @@ const ec2 = new AWS.EC2();
 // helper to tolerate old aws-sdk-promise `.data` wrapping
 const safe = (obj, key) => (obj && (obj[key] || (obj.data && obj.data[key])));
 
+// helper to assume role
+async function ecsClientForRole(roleArn, region, externalId) {
+  const sts = new AWS.STS();
+  const params = { RoleArn: roleArn, RoleSessionName: `c3vis-${Date.now()}` };
+  if (externalId) params.ExternalId = externalId;
+  const { Credentials: c } = await sts.assumeRole(params).promise();
+  return new AWS.ECS({
+    region,
+    accessKeyId: c.AccessKeyId,
+    secretAccessKey: c.SecretAccessKey,
+    sessionToken: c.SessionToken
+  });
+}
+
+
 /* Home page */
 
 router.get('/', function (req, res, next) {
@@ -232,18 +247,34 @@ router.get('/api/cluster_names', function (req, res, next) {
 
 function getClusterNames(useStaticData, res) {
   if (useStaticData) {
-    res.json(["demo-cluster-8", "demo-cluster-50", "demo-cluster-75", "demo-cluster-100", "invalid"]);
-  } else {
-    ecs.listClusters({}, function (err, data1) {
-      if (err) {
-        sendErrorResponse(err, res);
-      } else {
-        res.json(data1.clusterArns.map(function (str) {
-          return str.substring(str.indexOf("/") + 1)
-        }));
-      }
-    });
+    return res.json(["demo-cluster-8", "demo-cluster-50", "demo-cluster-75", "demo-cluster-100", "invalid"]);
   }
+
+  const assumeList = (process.env.C3VIS_ASSUME_ROLE_ARNS || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const region = AWS.config.region;
+  const baseEcs = new AWS.ECS({ region });
+
+  const listFrom = async (ecsClient) =>
+    ecsClient.listClusters({}).promise().then(r => r.clusterArns || []);
+
+  const promises = [
+    listFrom(baseEcs), // current account
+    ...assumeList.map(async (arn) => {
+      const ecsX = await ecsClientForRole(arn, region, process.env.C3VIS_EXTERNAL_ID);
+      return listFrom(ecsX);
+    })
+  ];
+
+  Promise.all(promises)
+    .then(results => {
+      const names = [...new Set([].concat(...results).map(str => str.substring(str.indexOf("/") + 1)))];
+      res.json(names);
+    })
+    .catch(err => sendErrorResponse(err, res));
 }
 
 function listAllContainerInstances(cluster) {
