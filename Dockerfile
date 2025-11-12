@@ -1,20 +1,29 @@
-# https://hub.docker.com/r/library/node/
+# ---- build stage ----
+FROM node:22-bookworm-slim AS build
+ENV NODE_ENV=production
+WORKDIR /app
 
-FROM node:9.11.1-alpine
+# carry only files needed for install first (cache efficiency)
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev
 
-# >> FIX:
-# Fixes error Ubuntu: "gyp ERR! stack Error: Can't find Python executable "python", you can set the PYTHON env variable"
-# REF: https://gist.github.com/vidhill/0a85dc1848feee4171944dc4d7757895
-# REF: https://github.com/nodejs/node-gyp/issues/1105
+# now copy the rest of the app
+COPY . .
 
-# build base includes g++ and gcc and Make
-RUN apk update && apk add python build-base
+# ---- runtime stage ----
+FROM node:22-bookworm-slim
+ENV NODE_ENV=production
+ENV PORT=3000
+WORKDIR /app
 
-# << END FIX
+# create non-root user
+RUN useradd -r -u 1001 nodeuser
 
-# Bundle app source
-COPY . /
-RUN cd /; npm -d install
+# copy files and give ownership to the non-root user
+COPY --chown=nodeuser:nodeuser --from=build /app /app
 
-EXPOSE  3000
-CMD ["npm", "start"]
+USER nodeuser
+EXPOSE 3000
+
+# IMPORTANT: start the app directly to avoid npm lifecycle scripts
+CMD ["node", "./bin/www"]
