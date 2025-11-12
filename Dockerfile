@@ -1,29 +1,16 @@
-# ---- build stage ----
-FROM node:22-bookworm-slim AS build
+# ---- build stage (amd64) ----
+FROM --platform=linux/amd64 node:22-bookworm-slim AS build
 ENV NODE_ENV=production
 WORKDIR /app
-
-# carry only files needed for install first (cache efficiency)
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
-
-# now copy the rest of the app
 COPY . .
 
-# ---- runtime stage ----
-FROM node:22-bookworm-slim
+# ---- runtime stage (distroless) ----
+FROM --platform=linux/amd64 gcr.io/distroless/nodejs22-debian12:nonroot
 ENV NODE_ENV=production
-ENV PORT=3000
 WORKDIR /app
-
-# create non-root user
-RUN useradd -r -u 1001 nodeuser
-
-# copy files and give ownership to the non-root user
-COPY --chown=nodeuser:nodeuser --from=build /app /app
-
-USER nodeuser
+COPY --chown=nonroot:nonroot --from=build /app /app
 EXPOSE 3000
-
-# IMPORTANT: start the app directly to avoid npm lifecycle scripts
-CMD ["node", "./bin/www"]
+# Start the Express entry point directly
+CMD ["./bin/www"]
