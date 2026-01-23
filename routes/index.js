@@ -4,16 +4,44 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const moment = require('moment');
-const AWS = require('aws-sdk');
+const {
+  ECSClient,
+  ListClustersCommand,
+  ListContainerInstancesCommand,
+  DescribeContainerInstancesCommand,
+  ListTasksCommand,
+  DescribeTasksCommand,
+  DescribeTaskDefinitionCommand
+} = require('@aws-sdk/client-ecs');
+const { EC2Client, DescribeInstancesCommand } = require('@aws-sdk/client-ec2');
+const { STSClient, AssumeRoleCommand, GetCallerIdentityCommand } = require('@aws-sdk/client-sts');
 const batchPromises = require('batch-promises');
-// AWS variable has default credentials from Shared Credentials File or Environment Variables.
-//   (see: https://docs.aws.amazon.com/AWSJavaScriptSDK/guide/node-configuring.html)
-// Override default credentials with configFile (e.g. './aws_config.json') if it exists
-if (fs.existsSync(config.aws.configFile)) {
+
+function loadAwsConfig() {
+  if (!fs.existsSync(config.aws.configFile)) return {};
   console.log(`Updating with settings from '${config.aws.configFile}'...`);
-  AWS.config.update(JSON.parse(fs.readFileSync(config.aws.configFile, 'utf8')));
+  return JSON.parse(fs.readFileSync(config.aws.configFile, 'utf8'));
 }
-console.log(`Targeting AWS region '${AWS.config.region}'`);
+
+function resolveAwsRegion(awsConfig) {
+  return awsConfig.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+}
+
+const awsConfig = loadAwsConfig();
+const awsRegion = resolveAwsRegion(awsConfig);
+if (!awsRegion) {
+  console.warn('AWS region is not set. Set AWS_REGION/AWS_DEFAULT_REGION or aws_config.json.');
+}
+console.log(`Targeting AWS region '${awsRegion}'`);
+
+const baseClientConfig = { region: awsRegion };
+if (awsConfig.accessKeyId && awsConfig.secretAccessKey) {
+  baseClientConfig.credentials = {
+    accessKeyId: awsConfig.accessKeyId,
+    secretAccessKey: awsConfig.secretAccessKey,
+    sessionToken: awsConfig.sessionToken
+  };
+}
 
 const utils = require('./utils');
 
@@ -25,18 +53,18 @@ const taskDefinitionCache = require('memory-cache');
 const promiseDelayer = require('./promiseDelayer');
 const staticClusterDataProvider = require('./staticClusterDataProvider.js');
 
-const ecs = new AWS.ECS();
-const ec2 = new AWS.EC2();
+const ecs = new ECSClient(baseClientConfig);
+const ec2 = new EC2Client(baseClientConfig);
+const sts = new STSClient(baseClientConfig);
 // helper to tolerate old aws-sdk-promise `.data` wrapping
 const safe = (obj, key) => (obj && (obj[key] || (obj.data && obj.data[key])));
 
 // helper to assume role
 async function ecsClientForRole(roleArn, region, externalId) {
-  const sts = new AWS.STS();
   const params = { RoleArn: roleArn, RoleSessionName: `c3vis-${Date.now()}` };
   if (externalId) params.ExternalId = externalId;
-  const { Credentials: c } = await sts.assumeRole(params).promise();
-  return new AWS.ECS({
+  const { Credentials: c } = await sts.send(new AssumeRoleCommand(params));
+  return new ECSClient({
     region,
     accessKeyId: c.AccessKeyId,
     secretAccessKey: c.SecretAccessKey,
@@ -55,8 +83,7 @@ function clusterShortName(cluster) {
 let BASE_ACCOUNT_ID;
 async function getBaseAccountId() {
   if (BASE_ACCOUNT_ID) return BASE_ACCOUNT_ID;
-  const sts = new AWS.STS();
-  const id = await sts.getCallerIdentity({}).promise();
+  const id = await sts.send(new GetCallerIdentityCommand({}));
   BASE_ACCOUNT_ID = id.Account;
   return BASE_ACCOUNT_ID;
 }
@@ -79,7 +106,7 @@ function accountIdFromCluster(cluster) {
 }
 
 async function clientsForCluster(cluster) {
-  const region = AWS.config.region;
+  const region = awsRegion;
   const acct = accountIdFromCluster(cluster);
   const baseAcct = await getBaseAccountId();
 
@@ -93,12 +120,11 @@ async function clientsForCluster(cluster) {
   }
   const ecsClient = await ecsClientForRole(roleArn, region, process.env.C3VIS_EXTERNAL_ID);
   // build matching EC2 client with same temp creds
-  const sts = new AWS.STS();
-  const { Credentials: c } = await sts.assumeRole({
+  const { Credentials: c } = await sts.send(new AssumeRoleCommand({
     RoleArn: roleArn, RoleSessionName: `c3vis-ec2-${Date.now()}`,
     ...(process.env.C3VIS_EXTERNAL_ID ? { ExternalId: process.env.C3VIS_EXTERNAL_ID } : {})
-  }).promise();
-  const ec2Client = new AWS.EC2({
+  }));
+  const ec2Client = new EC2Client({
     region, accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken
   });
   return { ecsClient, ec2Client };
@@ -247,10 +273,10 @@ function populateClusterStateWithInstanceSummaries(cluster) {
 
               return batchPromises(1, containerInstanceBatches, containerInstanceBatch => new Promise((resolve, reject) => {
                 debugLog(`\tCalling ecs.describeContainerInstances for Container Instance batch: ${containerInstanceBatch}`);
-                resolve(ecsClient.describeContainerInstances({
+                resolve(ecsClient.send(new DescribeContainerInstancesCommand({
                   cluster: cluster,
                   containerInstances: containerInstanceBatch
-                }).promise().then(promiseDelayer.delay(config.aws.apiDelay)));
+                })).then(promiseDelayer.delay(config.aws.apiDelay)));
               }));
             }
           })
@@ -267,7 +293,7 @@ function populateClusterStateWithInstanceSummaries(cluster) {
             const ec2instanceIds = containerInstances.map(i => i.ec2InstanceId);
             console.log(`Found ${ec2instanceIds.length} ec2InstanceIds for cluster '${cluster}': ${ec2instanceIds}`);
 
-            return ec2Client.describeInstances({ InstanceIds: ec2instanceIds }).promise()
+            return ec2Client.send(new DescribeInstancesCommand({ InstanceIds: ec2instanceIds }))
               .then(function (ec2Instances) {
                 const instances = [].concat.apply([], (safe(ec2Instances, 'Reservations') || []).map(r => r.Instances));
                 const privateIpAddresses = instances.map(i => i.PrivateIpAddress);
@@ -279,8 +305,8 @@ function populateClusterStateWithInstanceSummaries(cluster) {
                   return {
                     "ec2IpAddress": ec2IpAddress,
                     "ec2InstanceId": instance.ec2InstanceId,
-                    "ec2InstanceConsoleUrl": "https://console.aws.amazon.com/ec2/v2/home?region=" + AWS.config.region + "#Instances:instanceId=" + instance.ec2InstanceId,
-                    "ecsInstanceConsoleUrl": "https://console.aws.amazon.com/ecs/home?region=" + AWS.config.region + "#/clusters/" + short + "/containerInstances/" + instance["containerInstanceArn"].substring(instance["containerInstanceArn"].lastIndexOf("/") + 1),
+                    "ec2InstanceConsoleUrl": "https://console.aws.amazon.com/ec2/v2/home?region=" + awsRegion + "#Instances:instanceId=" + instance.ec2InstanceId,
+                    "ecsInstanceConsoleUrl": "https://console.aws.amazon.com/ecs/home?region=" + awsRegion + "#/clusters/" + short + "/containerInstances/" + instance["containerInstanceArn"].substring(instance["containerInstanceArn"].lastIndexOf("/") + 1),
                     "registeredCpu": utils.registeredCpu(instance),
                     "registeredMemory": utils.registeredMemory(instance),
                     "remainingCpu": utils.remainingCpu(instance),
@@ -310,11 +336,11 @@ function getClusterNames(useStaticData, res) {
   const assumeList = (process.env.C3VIS_ASSUME_ROLE_ARNS || "")
       .split(",").map(s => s.trim()).filter(Boolean);
 
-    const region = AWS.config.region;
-    const baseEcs = new AWS.ECS({ region });
+    const region = awsRegion;
+    const baseEcs = new ECSClient({ region });
 
     const listFrom = async (ecsClient) =>
-      ecsClient.listClusters({}).promise().then(r => r.clusterArns || []);
+      ecsClient.send(new ListClustersCommand({})).then(r => r.clusterArns || []);
 
     const promises = [
       listFrom(baseEcs), // current account
@@ -346,7 +372,7 @@ function listContainerInstanceWithToken(cluster, token, instanceArns, ecsClient)
   if (token) params['nextToken'] = token;
 
   debugLog("Calling ecs.listContainerInstances...");
-  return ecsClient.listContainerInstances(params).promise()
+  return ecsClient.send(new ListContainerInstancesCommand(params))
     .then(function (listContainerInstanceResponse) {
       const containerInstanceArns = instanceArns.concat(safe(listContainerInstanceResponse, 'containerInstanceArns') || []);
       const nextToken = safe(listContainerInstanceResponse, 'nextToken');
@@ -373,7 +399,7 @@ function listTasksWithToken(cluster, token, tasks, ecsClient) {
   if (token) params['nextToken'] = token;
 
   debugLog(`\tCalling ecs.listTasks with token: ${token} ...`);
-  return ecsClient.listTasks(params).promise()
+  return ecsClient.send(new ListTasksCommand(params))
     .then(promiseDelayer.delay(config.aws.apiDelay))
     .then(function (tasksResponse) {
       const taskArnsPage = safe(tasksResponse, 'taskArns') || [];
@@ -409,7 +435,7 @@ function getTasksWithTaskDefinitions(cluster, ecsClient) {
       .then(function (taskBatches) {
         return batchPromises(config.aws.maxSimultaneousDescribeTasksCalls, taskBatches, taskBatch => new Promise((resolve, reject) => {
           debugLog(`\tCalling ecs.describeTasks for Task batch: ${taskBatch}`);
-          resolve(ecsClient.describeTasks({ cluster: cluster, tasks: taskBatch }).promise()
+          resolve(ecsClient.send(new DescribeTasksCommand({ cluster: cluster, tasks: taskBatch }))
             .then(promiseDelayer.delay(config.aws.apiDelay)));
         }));
       })
@@ -424,7 +450,7 @@ function getTasksWithTaskDefinitions(cluster, ecsClient) {
             resolve(cachedTaskDef);
           } else {
             debugLog(`\tCalling ecs.describeTaskDefinition for Task Definition ARN: ${task.taskDefinitionArn}`);
-            resolve(ecsClient.describeTaskDefinition({ taskDefinition: task.taskDefinitionArn }).promise()
+            resolve(ecsClient.send(new DescribeTaskDefinitionCommand({ taskDefinition: task.taskDefinitionArn }))
               .then(promiseDelayer.delay(config.aws.apiDelay))
               .then(function (taskDefinition) {
                 debugLog(`\t\tReceived taskDefinition for ARN "${task.taskDefinitionArn}". Caching in memory.`);

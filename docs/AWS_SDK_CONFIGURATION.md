@@ -1,12 +1,12 @@
-# Configuring AWS SDK
+# Configuring AWS SDK (v3)
 
-The c3vis server uses the AWS JavaScript SDK to connect to AWS APIs.
+The c3vis server uses the AWS JavaScript SDK v3 clients to connect to AWS APIs.
 
-As per [Configuring the SDK for JavaScript](https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/configuring-the-jssdk.html), the AWS JavaScript SDK will get its configuration from the server's environment.
+As per [Configuring the SDK for JavaScript v3](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/loading-node-credentials-shared.html), the SDK will get its configuration from the server's environment and default credential chain.
 
 ## Provide Explicit AWS SDK Configuration with `aws_config.json` Configuration File
 
-AWS SDK configuration can be overridden by providing an `aws_config.json` file (this file location is overridable with `aws.configFile` option, see [CONFIGURATION.md](CONFIGURATION.md)).
+AWS SDK configuration can be overridden by providing an `aws_config.json` file (this file location is overridable with `aws.configFile` option, see [CONFIGURATION.md](CONFIGURATION.md)). The file is used to set the region and, optionally, explicit credentials.
 
 E.g. to set the region used by c3vis server to `us-east-1`, create an `aws_config.json` file in the root directory with the following:
 
@@ -16,23 +16,22 @@ E.g. to set the region used by c3vis server to `us-east-1`, create an `aws_confi
 }
 ```
 
-The contents of this file override all other sources of AWS SDK configuration.  
-The settings are applied to the AWS Global Configuration Object using `AWS.config.update()` as per [Using the Global Configuration Object](https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/global-config-object.html)
+The contents of this file override all other sources of AWS SDK configuration for c3vis.
 
 ## AWS Region
 
 As per above section, AWS Region can be provided in local `aws_config.json` file.
 
-Otherwise the Region will be configured as per [Setting the AWS Region](https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/setting-region.html).
+Otherwise the Region will be configured as per [Setting the AWS Region](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-region.html).
 
 ## AWS Credentials
 
-If using `aws_config.json` file as per above section, you can add AWS credentials properties `accessKeyId` and `secretAccessKey` to the `aws_config.json` 
-See [https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/loading-node-credentials-json-file.html](https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/loading-node-credentials-json-file.html).
+If using `aws_config.json` file as per above section, you can add AWS credentials properties `accessKeyId`, `secretAccessKey`, and optionally `sessionToken` to the `aws_config.json`.
+See [https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/loading-node-credentials-shared.html](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/loading-node-credentials-shared.html).
 
 *NOTE: Storing credentials in plaintext file is not recommended, especially if there is a risk this file could be committed to version control.*
 
-Otherwise, the credentials will be loaded as per priority listed [here](https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/setting-credentials-node.html).
+Otherwise, the credentials will be loaded as per priority listed [here](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/credential-providers.html).
 
 ## IAM Role Permissions
 
