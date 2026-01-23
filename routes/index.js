@@ -66,9 +66,11 @@ async function ecsClientForRole(roleArn, region, externalId) {
   const { Credentials: c } = await sts.send(new AssumeRoleCommand(params));
   return new ECSClient({
     region,
-    accessKeyId: c.AccessKeyId,
-    secretAccessKey: c.SecretAccessKey,
-    sessionToken: c.SessionToken
+    credentials: {
+      accessKeyId: c.AccessKeyId,
+      secretAccessKey: c.SecretAccessKey,
+      sessionToken: c.SessionToken
+    }
   });
 }
 
@@ -125,7 +127,12 @@ async function clientsForCluster(cluster) {
     ...(process.env.C3VIS_EXTERNAL_ID ? { ExternalId: process.env.C3VIS_EXTERNAL_ID } : {})
   }));
   const ec2Client = new EC2Client({
-    region, accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken
+    region,
+    credentials: {
+      accessKeyId: c.AccessKeyId,
+      secretAccessKey: c.SecretAccessKey,
+      sessionToken: c.SessionToken
+    }
   });
   return { ecsClient, ec2Client };
 }
