@@ -1,7 +1,55 @@
 /* See http://bl.ocks.org/mbostock/3886208 for D3 stacked bar chart documentation */
 
+/**
+ * @typedef {Object} EcsTaskDefinition
+ * @property {string} [family]
+ * @property {Array<{cpu:number, memory:number}>} [containerDefinitions]
+ * @property {string} [taskDefinitionArn]
+ */
+
+/**
+ * @typedef {Object} EcsTask
+ * @property {string} [group]
+ * @property {string} [taskDefinitionArn]
+ * @property {EcsTaskDefinition} [taskDefinition]
+ * @property {string} [serviceName]
+ * @property {{name:string, resourceAllocation:number, y0:number, y1:number}} [d3Data]
+ */
+
+/**
+ * @typedef {Object} InstanceSummary
+ * @property {string} ec2IpAddress
+ * @property {Array<EcsTask>} tasks
+ * @property {number} registeredMemory
+ * @property {number} registeredCpu
+ * @property {number} remainingMemory
+ * @property {number} remainingCpu
+ */
+
 function taskFamilyAndRevision(t) {
   return t.taskDefinitionArn.substring(t.taskDefinitionArn.lastIndexOf('/') + 1)
+}
+
+function taskFamilyNameFromArn(arn) {
+  if (!arn) return "";
+  const familyAndRevision = arn.substring(arn.lastIndexOf('/') + 1);
+  const colonIndex = familyAndRevision.lastIndexOf(':');
+  return colonIndex > -1 ? familyAndRevision.substring(0, colonIndex) : familyAndRevision;
+}
+
+function extractServiceName(task) {
+  if (!task) return "";
+  if (task.group && task.group.indexOf("service:") === 0) {
+    return task.group.substring("service:".length);
+  }
+  if (task.taskDefinition && task.taskDefinition.family) {
+    return task.taskDefinition.family;
+  }
+  return taskFamilyNameFromArn(task.taskDefinitionArn);
+}
+
+function normalizeServiceName(name) {
+  return (name || "").toString().toLowerCase().trim();
 }
 
 // ECS API returns memory as MBs and CPU as CPU Units
@@ -87,6 +135,9 @@ function addD3DataToTask(task, resourceType, y0) {
     y0: y0,
     y1: y1
   };
+  if (!task.serviceName) {
+    task.serviceName = extractServiceName(task);
+  }
   return y1;
 }
 
@@ -156,6 +207,7 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
 
   const showTaskBreakdown = true;  // TODO: Parameterise
 
+  /** @type {Array<InstanceSummary>} */
   const instanceSummaries = window.apiResponseData.instanceSummaries;
   const createTimestamp = window.apiResponseData.createTimestamp;
   const localizedClusterCacheTimestamp = new Date(Date.parse(createTimestamp));
@@ -325,6 +377,9 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
           return d.d3Data.name + "  (" + resourceLabel(resourceType) + ": " + d.d3Data.resourceAllocation + ")";
         });
 
+      updateServiceFilterOptions(instanceSummaries);
+      applyServiceFilter(window.serviceFilterText);
+
       // Draw legend
 
       const taskData = uniqueTaskDefs.sort();
@@ -396,6 +451,53 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
   } finally {
     onCompletion();
   }
+}
+
+function collectServiceNames(instanceSummaries) {
+  const names = instanceSummaries.reduce(function (acc, instance) {
+    return acc.concat(instance.tasks.map(function (t) {
+      const name = extractServiceName(t);
+      return name ? name : "";
+    }));
+  }, []);
+  const unique = names.filter(function (name, index) {
+    return name && names.indexOf(name) === index;
+  });
+  unique.sort();
+  return unique;
+}
+
+function updateServiceFilterOptions(instanceSummaries) {
+  const list = document.getElementById("serviceFilterList");
+  if (!list) return;
+  while (list.firstChild) {
+    list.removeChild(list.firstChild);
+  }
+  const names = collectServiceNames(instanceSummaries);
+  names.forEach(function (name) {
+    const option = document.createElement("option");
+    option.value = name;
+    list.appendChild(option);
+  });
+}
+
+function applyServiceFilter(filterText) {
+  const normalized = normalizeServiceName(filterText);
+  const hasFilter = normalized.length > 0;
+  d3.selectAll(".task-block")
+    .classed("task-block--dim", function (d) {
+      if (!hasFilter) return false;
+      return normalizeServiceName(extractServiceName(d)).indexOf(normalized) === -1;
+    })
+    .classed("task-block--highlight", function (d) {
+      if (!hasFilter) return false;
+      return normalizeServiceName(extractServiceName(d)).indexOf(normalized) !== -1;
+    });
+}
+
+function setServiceFilter(filterText) {
+  window.serviceFilterText = filterText || "";
+  applyServiceFilter(window.serviceFilterText);
 }
 
 function calculateInterval(attemptIndex, defaultInterval) {
