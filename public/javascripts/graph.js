@@ -52,6 +52,8 @@ function normalizeServiceName(name) {
   return (name || "").toString().toLowerCase().trim();
 }
 
+const NO_SERVICE_LABEL = "no-service";
+
 // ECS API returns memory as MBs and CPU as CPU Units
 // For memory we want to convert from MBs (e.g. 4096 MBs) to bytes (4096000) to show correct units on Y axis
 function translateResourceAmountForYAxis(resourceAmount, resourceType) {
@@ -454,16 +456,24 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
 }
 
 function collectServiceNames(instanceSummaries) {
+  let hasNoService = false;
   const names = instanceSummaries.reduce(function (acc, instance) {
     return acc.concat(instance.tasks.map(function (t) {
       const name = extractServiceName(t);
-      return name ? name : "";
+      if (!name) {
+        hasNoService = true;
+        return "";
+      }
+      return name;
     }));
   }, []);
   const unique = names.filter(function (name, index) {
     return name && names.indexOf(name) === index;
   });
   unique.sort();
+  if (hasNoService) {
+    unique.unshift(NO_SERVICE_LABEL);
+  }
   return unique;
 }
 
@@ -487,11 +497,19 @@ function applyServiceFilter(filterText) {
   d3.selectAll(".task-block")
     .classed("task-block--dim", function (d) {
       if (!hasFilter) return false;
-      return normalizeServiceName(extractServiceName(d)).indexOf(normalized) === -1;
+      const service = normalizeServiceName(extractServiceName(d));
+      if (normalized === NO_SERVICE_LABEL) {
+        return service.length !== 0;
+      }
+      return service.indexOf(normalized) === -1;
     })
     .classed("task-block--highlight", function (d) {
       if (!hasFilter) return false;
-      return normalizeServiceName(extractServiceName(d)).indexOf(normalized) !== -1;
+      const service = normalizeServiceName(extractServiceName(d));
+      if (normalized === NO_SERVICE_LABEL) {
+        return service.length === 0;
+      }
+      return service.indexOf(normalized) !== -1;
     });
 }
 

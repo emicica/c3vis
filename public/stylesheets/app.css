@@ -24,8 +24,9 @@
     opacity: 0.25;
 }
 .task-block--highlight {
-    stroke: #111;
-    stroke-width: 1.2px;
+    stroke: #000;
+    stroke-width: 2px;
+    shape-rendering: auto;
 }
 
 .container {
