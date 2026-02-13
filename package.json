@@ -8,9 +8,9 @@
     "test": "mocha test/"
   },
   "dependencies": {
-    "@aws-sdk/client-ec2": "^3.758.0",
-    "@aws-sdk/client-ecs": "^3.758.0",
-    "@aws-sdk/client-sts": "^3.758.0",
+    "@aws-sdk/client-ec2": "^3.989.0",
+    "@aws-sdk/client-ecs": "^3.989.0",
+    "@aws-sdk/client-sts": "^3.989.0",
     "batch-promises": "0.0.3",
     "body-parser": "^1.20.3",
     "cookie-parser": "^1.4.7",
@@ -25,7 +25,7 @@
   },
   "devDependencies": {
     "chai": "4.1.2",
-    "mocha": "^10.4.0"
+    "mocha": "^11.7.5"
   },
   "overrides": {
     "qs": "^6.13.0"
