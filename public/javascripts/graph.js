@@ -313,6 +313,10 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
       xAxisLabels.selectAll("text")
         .attr("class", "graph-axis-small")
     }
+    if (xRange.rangeBand() < 80) {
+      xAxisLabels.selectAll("text")
+        .style("font-size", "10px");
+    }
 
     // Draw ASG grouping labels and separators
     const asgGroups = [];
@@ -339,39 +343,8 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
       }
     }
 
-    const asgLabelYOffset = xRange.rangeBand() < 80 ? (xRange.rangeBand() < 14 ? 120 : 90) : 70;
-    asgGroups.forEach(function (group, idx) {
-      const first = instanceSummaries[group.startIndex];
-      const last = instanceSummaries[group.endIndex];
-      if (!first || !last) return;
-      const firstX = xRange(first.ec2IpAddress);
-      const lastX = xRange(last.ec2IpAddress);
-      if (typeof firstX !== "number" || typeof lastX !== "number") return;
-      const leftEdge = idx === 0 ? firstX : asgSeparators[idx - 1];
-      const rightEdge = idx === asgGroups.length - 1 ? (lastX + xRange.rangeBand()) : asgSeparators[idx];
-      graph.append("rect")
-        .attr("class", idx % 2 === 0 ? "asg-band asg-band--even" : "asg-band asg-band--odd")
-        .attr("x", leftEdge)
-        .attr("y", -ASG_BAND_TOP + ASG_BAND_OFFSET)
-        .attr("width", rightEdge - leftEdge)
-        .attr("height", GRAPH_HEIGHT + ASG_BAND_TOP - ASG_BAND_OFFSET);
-      const midX = (firstX + lastX + xRange.rangeBand()) / 2;
-      graph.append("text")
-        .attr("class", "asg-label")
-        .attr("x", midX)
-        .attr("y", GRAPH_HEIGHT + asgLabelYOffset)
-        .attr("text-anchor", "middle")
-        .text(group.name);
-      if (idx > 0) {
-        const separatorX = asgSeparators[idx - 1];
-        graph.append("line")
-          .attr("class", "asg-separator")
-          .attr("x1", separatorX)
-          .attr("x2", separatorX)
-          .attr("y1", 0)
-          .attr("y2", GRAPH_HEIGHT);
-      }
-    });
+    const asgLabelYOffset = xRange.rangeBand() < 80 ? (xRange.rangeBand() < 14 ? 150 : 120) : 70;
+    const asgLabelMaxY = GRAPH_HEIGHT + GRAPH_BOTTOM_MARGIN - 10;
 
     // Draw Y axis
     graph.append("g")
@@ -428,6 +401,40 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
         .text(function (d) {
           return d.d3Data.name + "  (" + resourceLabel(resourceType) + ": " + d.d3Data.resourceAllocation + ")";
         });
+
+      // Render ASG grouping overlays after tasks so the tint is visible
+      asgGroups.forEach(function (group, idx) {
+        const first = instanceSummaries[group.startIndex];
+        const last = instanceSummaries[group.endIndex];
+        if (!first || !last) return;
+        const firstX = xRange(first.ec2IpAddress);
+        const lastX = xRange(last.ec2IpAddress);
+        if (typeof firstX !== "number" || typeof lastX !== "number") return;
+        const leftEdge = idx === 0 ? firstX : asgSeparators[idx - 1];
+        const rightEdge = idx === asgGroups.length - 1 ? (lastX + xRange.rangeBand()) : asgSeparators[idx];
+        graph.append("rect")
+          .attr("class", idx % 2 === 0 ? "asg-band asg-band--even" : "asg-band asg-band--odd")
+          .attr("x", leftEdge)
+          .attr("y", -ASG_BAND_TOP + ASG_BAND_OFFSET)
+          .attr("width", rightEdge - leftEdge)
+          .attr("height", GRAPH_HEIGHT + ASG_BAND_TOP - ASG_BAND_OFFSET);
+        const midX = (firstX + lastX + xRange.rangeBand()) / 2;
+        graph.append("text")
+          .attr("class", "asg-label")
+          .attr("x", midX)
+        .attr("y", Math.min(GRAPH_HEIGHT + asgLabelYOffset, asgLabelMaxY))
+          .attr("text-anchor", "middle")
+          .text(group.name);
+        if (idx > 0) {
+          const separatorX = asgSeparators[idx - 1];
+          graph.append("line")
+            .attr("class", "asg-separator")
+            .attr("x1", separatorX)
+            .attr("x2", separatorX)
+            .attr("y1", 0)
+            .attr("y2", GRAPH_HEIGHT);
+        }
+      });
 
       updateTaskDefinitionFilterOptions(uniqueTaskDefs);
       applyTaskDefinitionFilter(window.taskDefinitionFilterText);
