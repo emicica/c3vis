@@ -158,6 +158,8 @@ const RIGHT_MARGIN = 50;
 const LEFT_MARGIN = 50;
 const GRAPH_HEIGHT = 520 - GRAPH_TOP_MARGIN - GRAPH_BOTTOM_MARGIN;
 const TOTAL_HEIGHT = 400;
+const ASG_BAND_TOP = 12;
+const ASG_BAND_OFFSET = 10;
 const DEFAULT_GRAPH_WIDTH = 1000;
 const EXPANDED_GRAPH_WIDTH = 1300;
 
@@ -323,6 +325,20 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
         current.endIndex = index;
       }
     });
+    const asgSeparators = [];
+    for (let i = 1; i < asgGroups.length; i++) {
+      const current = asgGroups[i];
+      const prev = asgGroups[i - 1];
+      const prevLast = instanceSummaries[prev.endIndex];
+      const currentFirst = instanceSummaries[current.startIndex];
+      const prevLastX = xRange(prevLast.ec2IpAddress);
+      const currentFirstX = xRange(currentFirst.ec2IpAddress);
+      if (typeof prevLastX === "number" && typeof currentFirstX === "number") {
+        const prevEndX = prevLastX + xRange.rangeBand();
+        asgSeparators.push((prevEndX + currentFirstX) / 2);
+      }
+    }
+
     asgGroups.forEach(function (group, idx) {
       const first = instanceSummaries[group.startIndex];
       const last = instanceSummaries[group.endIndex];
@@ -330,6 +346,14 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
       const firstX = xRange(first.ec2IpAddress);
       const lastX = xRange(last.ec2IpAddress);
       if (typeof firstX !== "number" || typeof lastX !== "number") return;
+      const leftEdge = idx === 0 ? firstX : asgSeparators[idx - 1];
+      const rightEdge = idx === asgGroups.length - 1 ? (lastX + xRange.rangeBand()) : asgSeparators[idx];
+      graph.append("rect")
+        .attr("class", idx % 2 === 0 ? "asg-band asg-band--even" : "asg-band asg-band--odd")
+        .attr("x", leftEdge)
+        .attr("y", -ASG_BAND_TOP + ASG_BAND_OFFSET)
+        .attr("width", rightEdge - leftEdge)
+        .attr("height", GRAPH_HEIGHT + ASG_BAND_TOP - ASG_BAND_OFFSET);
       const midX = (firstX + lastX + xRange.rangeBand()) / 2;
       graph.append("text")
         .attr("class", "asg-label")
@@ -338,10 +362,11 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
         .attr("text-anchor", "middle")
         .text(group.name);
       if (idx > 0) {
+        const separatorX = asgSeparators[idx - 1];
         graph.append("line")
           .attr("class", "asg-separator")
-          .attr("x1", firstX - 2)
-          .attr("x2", firstX - 2)
+          .attr("x1", separatorX)
+          .attr("x2", separatorX)
           .attr("y1", 0)
           .attr("y2", GRAPH_HEIGHT);
       }

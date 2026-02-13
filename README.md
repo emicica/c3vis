@@ -27,7 +27,7 @@ on configuring the AWS SDK for server-side AWS connectivity.
 
 ## Requirements
 
-Node >= 0.12
+Node >= 20 (Node 22 recommended)
 
 ## Building and Running
 
@@ -63,6 +63,10 @@ The list of clusters and the user's current selection are stored in cookies. Use
 The Y axis shows total memory or CPU available for the instances. Memory is the default resource type represented. Use the "resourceType" query parameter to toggle between "memory" and "cpu".  E.g. ```localhost:3000/?resourceType=cpu```
 
 The X axis displays the Private IP Address for each EC2 instance. Right-clicking the IP address shows the context menu with links to browse the instance in the ECS and EC2 consoles.
+
+Task definitions are shown in the legend. Use the "Filter task definition" box to highlight matching task definitions on the graph.
+
+Instances are grouped on the X axis by Auto Scaling Group (capacity provider). The group label is derived from the EC2 tag `aws:autoscaling:groupName`.
 
 ### AWS API Call Throttling
 
