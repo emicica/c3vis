@@ -339,6 +339,7 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
       }
     }
 
+    const asgLabelYOffset = xRange.rangeBand() < 80 ? (xRange.rangeBand() < 14 ? 120 : 90) : 70;
     asgGroups.forEach(function (group, idx) {
       const first = instanceSummaries[group.startIndex];
       const last = instanceSummaries[group.endIndex];
@@ -358,7 +359,7 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
       graph.append("text")
         .attr("class", "asg-label")
         .attr("x", midX)
-        .attr("y", GRAPH_HEIGHT + 70)
+        .attr("y", GRAPH_HEIGHT + asgLabelYOffset)
         .attr("text-anchor", "middle")
         .text(group.name);
       if (idx > 0) {
