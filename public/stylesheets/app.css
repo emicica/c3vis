@@ -9,6 +9,15 @@
 .graph-axis-small {
     font-size: 10px;
 }
+.asg-label {
+    font-size: 11px;
+    fill: #333;
+}
+.asg-separator {
+    stroke: #999;
+    stroke-width: 1px;
+    shape-rendering: crispEdges;
+}
 
 .instance-block {
     fill: #FAFAFA;

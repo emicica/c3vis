@@ -187,9 +187,9 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
   const showTaskBreakdown = true;  // TODO: Parameterise
 
   /** @type {Array<InstanceSummary>} */
-  const instanceSummaries = window.apiResponseData.instanceSummaries;
-  const createTimestamp = window.apiResponseData.createTimestamp;
-  const localizedClusterCacheTimestamp = new Date(Date.parse(createTimestamp));
+    const instanceSummaries = window.apiResponseData.instanceSummaries;
+    const createTimestamp = window.apiResponseData.createTimestamp;
+    const localizedClusterCacheTimestamp = new Date(Date.parse(createTimestamp));
 
   try {
     const resourceType = parseResourceType(resourceTypeText, ResourceEnum.MEMORY);
@@ -234,6 +234,18 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
       instance.tasks.forEach(function (task) {
         y0 = addD3DataToTask(task, resourceType, y0);
       });
+    });
+
+    // Group by ASG (capacity provider) and keep a stable order within groups
+    const asgKey = function (d) {
+      return (d.asgName || "unknown").toString();
+    };
+    instanceSummaries.sort(function (a, b) {
+      const aKey = asgKey(a).toLowerCase();
+      const bKey = asgKey(b).toLowerCase();
+      if (aKey < bKey) return -1;
+      if (aKey > bKey) return 1;
+      return (a.ec2IpAddress || "").localeCompare(b.ec2IpAddress || "");
     });
 
     // Set X axis ordinal domain range to be list of server names
@@ -299,6 +311,41 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
       xAxisLabels.selectAll("text")
         .attr("class", "graph-axis-small")
     }
+
+    // Draw ASG grouping labels and separators
+    const asgGroups = [];
+    instanceSummaries.forEach(function (d, index) {
+      const name = asgKey(d);
+      const current = asgGroups[asgGroups.length - 1];
+      if (!current || current.name !== name) {
+        asgGroups.push({ name: name, startIndex: index, endIndex: index });
+      } else {
+        current.endIndex = index;
+      }
+    });
+    asgGroups.forEach(function (group, idx) {
+      const first = instanceSummaries[group.startIndex];
+      const last = instanceSummaries[group.endIndex];
+      if (!first || !last) return;
+      const firstX = xRange(first.ec2IpAddress);
+      const lastX = xRange(last.ec2IpAddress);
+      if (typeof firstX !== "number" || typeof lastX !== "number") return;
+      const midX = (firstX + lastX + xRange.rangeBand()) / 2;
+      graph.append("text")
+        .attr("class", "asg-label")
+        .attr("x", midX)
+        .attr("y", GRAPH_HEIGHT + 70)
+        .attr("text-anchor", "middle")
+        .text(group.name);
+      if (idx > 0) {
+        graph.append("line")
+          .attr("class", "asg-separator")
+          .attr("x1", firstX - 2)
+          .attr("x2", firstX - 2)
+          .attr("y1", 0)
+          .attr("y2", GRAPH_HEIGHT);
+      }
+    });
 
     // Draw Y axis
     graph.append("g")

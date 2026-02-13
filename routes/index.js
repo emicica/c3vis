@@ -305,6 +305,14 @@ function populateClusterStateWithInstanceSummaries(cluster) {
                 const instances = [].concat.apply([], (safe(ec2Instances, 'Reservations') || []).map(r => r.Instances));
                 const privateIpAddresses = instances.map(i => i.PrivateIpAddress);
                 console.log(`\twith ${privateIpAddresses.length} matching Private IP addresses: ${privateIpAddresses}`);
+                const asgByInstanceId = {};
+                instances.forEach(i => {
+                  const tags = i.Tags || [];
+                  const asgTag = tags.find(t => t.Key === 'aws:autoscaling:groupName');
+                  if (asgTag && asgTag.Value) {
+                    asgByInstanceId[i.InstanceId] = asgTag.Value;
+                  }
+                });
 
                 const short = clusterShortName(cluster);
                 const instanceSummaries = containerInstances.map(function (instance) {
@@ -314,6 +322,7 @@ function populateClusterStateWithInstanceSummaries(cluster) {
                     "ec2InstanceId": instance.ec2InstanceId,
                     "ec2InstanceConsoleUrl": "https://console.aws.amazon.com/ec2/v2/home?region=" + awsRegion + "#Instances:instanceId=" + instance.ec2InstanceId,
                     "ecsInstanceConsoleUrl": "https://console.aws.amazon.com/ecs/home?region=" + awsRegion + "#/clusters/" + short + "/containerInstances/" + instance["containerInstanceArn"].substring(instance["containerInstanceArn"].lastIndexOf("/") + 1),
+                    "asgName": asgByInstanceId[instance.ec2InstanceId] || "unknown",
                     "registeredCpu": utils.registeredCpu(instance),
                     "registeredMemory": utils.registeredMemory(instance),
                     "remainingCpu": utils.remainingCpu(instance),
