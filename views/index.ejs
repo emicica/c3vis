@@ -38,11 +38,11 @@
       function removeClustersCookie() {
         Cookies.remove("clusters" + (staticData() ? "-static" : ""));
       }
-      function getServiceFilterCookie() {
-        return Cookies.get("serviceFilter" + (staticData() ? "-static" : ""));
+      function getTaskDefinitionFilterCookie() {
+        return Cookies.get("taskDefinitionFilter" + (staticData() ? "-static" : ""));
       }
-      function setServiceFilterCookie(value) {
-        Cookies.set("serviceFilter" + (staticData() ? "-static" : ""), value, 7);
+      function setTaskDefinitionFilterCookie(value) {
+        Cookies.set("taskDefinitionFilter" + (staticData() ? "-static" : ""), value, 7);
       }
       function refreshClusterDropdown() {
         removeClustersCookie();
@@ -131,8 +131,8 @@
           </div>
           <form class="navbar-form service-filter-form" onsubmit="return false;">
             <div class="form-group">
-              <input id="serviceFilterInput" class="form-control" type="text" list="serviceFilterList" placeholder="Filter service">
-              <datalist id="serviceFilterList"></datalist>
+              <input id="taskDefinitionFilterInput" class="form-control" type="text" list="taskDefinitionFilterList" placeholder="Filter task definition">
+              <datalist id="taskDefinitionFilterList"></datalist>
             </div>
             <button id="clearServiceFilter" class="btn btn-default" type="button">Clear</button>
           </form>
@@ -177,26 +177,26 @@
         console.debug("Refreshing graph with 'forceRefresh'...");
         repopulateGraph(true);
       });
-      $("#serviceFilterInput").on("input", function() {
+      $("#taskDefinitionFilterInput").on("input", function() {
         var filterText = $(this).val();
-        setServiceFilter(filterText);
-        setServiceFilterCookie(filterText);
+        setTaskDefinitionFilter(filterText);
+        setTaskDefinitionFilterCookie(filterText);
       });
-      $("#serviceFilterInput").on("keydown", function(e) {
+      $("#taskDefinitionFilterInput").on("keydown", function(e) {
         if (e.key === "Enter") {
           e.preventDefault();
         }
       });
       $("#clearServiceFilter").click(function() {
-        $("#serviceFilterInput").val("");
-        setServiceFilter("");
-        setServiceFilterCookie("");
+        $("#taskDefinitionFilterInput").val("");
+        setTaskDefinitionFilter("");
+        setTaskDefinitionFilterCookie("");
       });
-      (function initServiceFilter() {
-        var filterText = getServiceFilterCookie() || "";
+      (function initTaskDefinitionFilter() {
+        var filterText = getTaskDefinitionFilterCookie() || "";
         if (filterText) {
-          $("#serviceFilterInput").val(filterText);
-          setServiceFilter(filterText);
+          $("#taskDefinitionFilterInput").val(filterText);
+          setTaskDefinitionFilter(filterText);
         }
       })();
     </script>

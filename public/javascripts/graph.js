@@ -30,29 +30,9 @@ function taskFamilyAndRevision(t) {
   return t.taskDefinitionArn.substring(t.taskDefinitionArn.lastIndexOf('/') + 1)
 }
 
-function taskFamilyNameFromArn(arn) {
-  if (!arn) return "";
-  const familyAndRevision = arn.substring(arn.lastIndexOf('/') + 1);
-  const colonIndex = familyAndRevision.lastIndexOf(':');
-  return colonIndex > -1 ? familyAndRevision.substring(0, colonIndex) : familyAndRevision;
-}
-
-function extractServiceName(task) {
-  if (!task) return "";
-  if (task.group && task.group.indexOf("service:") === 0) {
-    return task.group.substring("service:".length);
-  }
-  if (task.taskDefinition && task.taskDefinition.family) {
-    return task.taskDefinition.family;
-  }
-  return taskFamilyNameFromArn(task.taskDefinitionArn);
-}
-
-function normalizeServiceName(name) {
+function normalizeTaskDefinitionName(name) {
   return (name || "").toString().toLowerCase().trim();
 }
-
-const NO_SERVICE_LABEL = "no-service";
 
 // ECS API returns memory as MBs and CPU as CPU Units
 // For memory we want to convert from MBs (e.g. 4096 MBs) to bytes (4096000) to show correct units on Y axis
@@ -137,9 +117,6 @@ function addD3DataToTask(task, resourceType, y0) {
     y0: y0,
     y1: y1
   };
-  if (!task.serviceName) {
-    task.serviceName = extractServiceName(task);
-  }
   return y1;
 }
 
@@ -379,8 +356,8 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
           return d.d3Data.name + "  (" + resourceLabel(resourceType) + ": " + d.d3Data.resourceAllocation + ")";
         });
 
-      updateServiceFilterOptions(instanceSummaries);
-      applyServiceFilter(window.serviceFilterText);
+      updateTaskDefinitionFilterOptions(uniqueTaskDefs);
+      applyTaskDefinitionFilter(window.taskDefinitionFilterText);
 
       // Draw legend
 
@@ -455,67 +432,38 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
   }
 }
 
-function collectServiceNames(instanceSummaries) {
-  let hasNoService = false;
-  const names = instanceSummaries.reduce(function (acc, instance) {
-    return acc.concat(instance.tasks.map(function (t) {
-      const name = extractServiceName(t);
-      if (!name) {
-        hasNoService = true;
-        return "";
-      }
-      return name;
-    }));
-  }, []);
-  const unique = names.filter(function (name, index) {
-    return name && names.indexOf(name) === index;
-  });
-  unique.sort();
-  if (hasNoService) {
-    unique.unshift(NO_SERVICE_LABEL);
-  }
-  return unique;
-}
-
-function updateServiceFilterOptions(instanceSummaries) {
-  const list = document.getElementById("serviceFilterList");
+function updateTaskDefinitionFilterOptions(taskDefinitions) {
+  const list = document.getElementById("taskDefinitionFilterList");
   if (!list) return;
   while (list.firstChild) {
     list.removeChild(list.firstChild);
   }
-  const names = collectServiceNames(instanceSummaries);
-  names.forEach(function (name) {
+  taskDefinitions.forEach(function (name) {
     const option = document.createElement("option");
     option.value = name;
     list.appendChild(option);
   });
 }
 
-function applyServiceFilter(filterText) {
-  const normalized = normalizeServiceName(filterText);
+function applyTaskDefinitionFilter(filterText) {
+  const normalized = normalizeTaskDefinitionName(filterText);
   const hasFilter = normalized.length > 0;
   d3.selectAll(".task-block")
     .classed("task-block--dim", function (d) {
       if (!hasFilter) return false;
-      const service = normalizeServiceName(extractServiceName(d));
-      if (normalized === NO_SERVICE_LABEL) {
-        return service.length !== 0;
-      }
-      return service.indexOf(normalized) === -1;
+      const name = normalizeTaskDefinitionName(taskFamilyAndRevision(d));
+      return name.indexOf(normalized) === -1;
     })
     .classed("task-block--highlight", function (d) {
       if (!hasFilter) return false;
-      const service = normalizeServiceName(extractServiceName(d));
-      if (normalized === NO_SERVICE_LABEL) {
-        return service.length === 0;
-      }
-      return service.indexOf(normalized) !== -1;
+      const name = normalizeTaskDefinitionName(taskFamilyAndRevision(d));
+      return name.indexOf(normalized) !== -1;
     });
 }
 
-function setServiceFilter(filterText) {
-  window.serviceFilterText = filterText || "";
-  applyServiceFilter(window.serviceFilterText);
+function setTaskDefinitionFilter(filterText) {
+  window.taskDefinitionFilterText = filterText || "";
+  applyTaskDefinitionFilter(window.taskDefinitionFilterText);
 }
 
 function calculateInterval(attemptIndex, defaultInterval) {
