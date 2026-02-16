@@ -1,3 +1,4 @@
 aws_config.json
 .idea
 node_modules
+build.sh
