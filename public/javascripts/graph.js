@@ -16,7 +16,7 @@
  * @property {string} [taskDefinitionArn]
  * @property {EcsTaskDefinition} [taskDefinition]
  * @property {string} [serviceName]
- * @property {{name:string, graphResourceAllocation:number, taskDefinitionResourceAllocation:number, appliedResourceAllocation:number, taskDefinitionMemoryReservationAllocation:number|null, overrideMemoryReservationAllocation:number|null, appliedMemoryReservationAllocation:number|null, taskDefinitionMemoryHardLimitAllocation:number|null, overrideMemoryHardLimitAllocation:number|null, appliedMemoryHardLimitAllocation:number|null, y0:number, y1:number}} [d3Data]
+ * @property {{name:string, graphResourceAllocation:number, taskDefinitionResourceAllocation:number, appliedResourceAllocation:number, taskDefinitionSoftLimitAllocation:number|null, taskDefinitionHardLimitAllocation:number|null, overrideSoftLimitAllocation:number|null, overrideHardLimitAllocation:number|null, y0:number, y1:number}} [d3Data]
  */
 
 /**
@@ -166,71 +166,53 @@ function appliedTaskResourceAllocation(task, resourceType) {
 function taskMemoryAllocationBreakdown(task) {
   const containerDefinitions = ((task || {}).taskDefinition || {}).containerDefinitions || [];
   const overridesByContainerName = taskContainerOverridesByName(task);
-  const taskLevelMemoryOverride = parseNumericResource((task || {}).memory);
-  let taskDefinitionMemoryReservationTotal = 0;
-  let appliedMemoryReservationTotal = 0;
-  let overrideMemoryReservationTotal = 0;
-  let taskDefinitionMemoryHardLimitTotal = 0;
-  let appliedMemoryHardLimitFromContainers = 0;
-  let overrideMemoryHardLimitFromContainers = 0;
-  let hasTaskDefinitionMemoryHardLimit = false;
-  let hasAppliedMemoryHardLimitFromContainers = false;
-  let hasOverrideMemoryReservation = false;
-  let hasOverrideMemoryHardLimitFromContainers = false;
+  let taskDefinitionSoftLimitTotal = 0;
+  let taskDefinitionHardLimitTotal = 0;
+  let overrideSoftLimitTotal = 0;
+  let overrideHardLimitTotal = 0;
+  let graphMemoryAllocationTotal = 0;
+  let hasTaskDefinitionSoftLimit = false;
+  let hasTaskDefinitionHardLimit = false;
+  let hasOverrideSoftLimit = false;
+  let hasOverrideHardLimit = false;
 
   containerDefinitions.forEach(function (containerDefinition) {
     const containerOverride = overridesByContainerName[containerDefinition.name] || {};
-    const containerTaskDefinitionMemoryReservation = parseNumericResource(containerDefinition.memoryReservation);
-    const containerTaskDefinitionMemoryHardLimit = parseNumericResource(containerDefinition.memory);
-    const containerOverrideMemoryReservation = parseNumericResource(containerOverride.memoryReservation);
-    const containerOverrideMemoryHardLimit = parseNumericResource(containerOverride.memory);
-    const taskDefinitionMemoryReservationForContainer = firstNumericValue(
-      [containerTaskDefinitionMemoryReservation, containerTaskDefinitionMemoryHardLimit],
+    const taskDefinitionSoftLimit = parseNumericResource(containerDefinition.memoryReservation);
+    const taskDefinitionHardLimit = parseNumericResource(containerDefinition.memory);
+    const overrideSoftLimit = parseNumericResource(containerOverride.memoryReservation);
+    const overrideHardLimit = parseNumericResource(containerOverride.memory);
+    const graphMemoryAllocation = firstNumericValue(
+      [overrideSoftLimit, overrideHardLimit, taskDefinitionSoftLimit, taskDefinitionHardLimit],
       0
     );
-    const appliedMemoryReservationForContainer = firstNumericValue(
-      [containerOverrideMemoryReservation, containerTaskDefinitionMemoryReservation, containerOverrideMemoryHardLimit, containerTaskDefinitionMemoryHardLimit],
-      0
-    );
-    const taskDefinitionMemoryHardLimitForContainer = firstNumericValue([containerTaskDefinitionMemoryHardLimit], null);
-    const appliedMemoryHardLimitForContainer = firstNumericValue([containerOverrideMemoryHardLimit, containerTaskDefinitionMemoryHardLimit], null);
 
-    taskDefinitionMemoryReservationTotal += taskDefinitionMemoryReservationForContainer;
-    appliedMemoryReservationTotal += appliedMemoryReservationForContainer;
-    if (containerOverrideMemoryReservation !== null) {
-      overrideMemoryReservationTotal += containerOverrideMemoryReservation;
-      hasOverrideMemoryReservation = true;
-    }
-    if (containerOverrideMemoryHardLimit !== null) {
-      overrideMemoryHardLimitFromContainers += containerOverrideMemoryHardLimit;
-      hasOverrideMemoryHardLimitFromContainers = true;
-    }
+    graphMemoryAllocationTotal += graphMemoryAllocation;
 
-    if (taskDefinitionMemoryHardLimitForContainer !== null) {
-      taskDefinitionMemoryHardLimitTotal += taskDefinitionMemoryHardLimitForContainer;
-      hasTaskDefinitionMemoryHardLimit = true;
+    if (taskDefinitionSoftLimit !== null) {
+      taskDefinitionSoftLimitTotal += taskDefinitionSoftLimit;
+      hasTaskDefinitionSoftLimit = true;
     }
-    if (appliedMemoryHardLimitForContainer !== null) {
-      appliedMemoryHardLimitFromContainers += appliedMemoryHardLimitForContainer;
-      hasAppliedMemoryHardLimitFromContainers = true;
+    if (taskDefinitionHardLimit !== null) {
+      taskDefinitionHardLimitTotal += taskDefinitionHardLimit;
+      hasTaskDefinitionHardLimit = true;
+    }
+    if (overrideSoftLimit !== null) {
+      overrideSoftLimitTotal += overrideSoftLimit;
+      hasOverrideSoftLimit = true;
+    }
+    if (overrideHardLimit !== null) {
+      overrideHardLimitTotal += overrideHardLimit;
+      hasOverrideHardLimit = true;
     }
   });
 
-  const resolvedAppliedMemoryReservation =
-    containerDefinitions.length > 0 ? appliedMemoryReservationTotal : firstNumericValue([taskLevelMemoryOverride], 0);
-  const resolvedAppliedMemoryHardLimit = taskLevelMemoryOverride !== null
-    ? taskLevelMemoryOverride
-    : (hasAppliedMemoryHardLimitFromContainers ? appliedMemoryHardLimitFromContainers : null);
-  const resolvedOverrideMemoryHardLimit =
-    hasOverrideMemoryHardLimitFromContainers ? overrideMemoryHardLimitFromContainers : null;
-
   return {
-    taskDefinitionMemoryReservation: taskDefinitionMemoryReservationTotal,
-    overrideMemoryReservation: hasOverrideMemoryReservation ? overrideMemoryReservationTotal : null,
-    appliedMemoryReservation: resolvedAppliedMemoryReservation,
-    taskDefinitionMemoryHardLimit: hasTaskDefinitionMemoryHardLimit ? taskDefinitionMemoryHardLimitTotal : null,
-    overrideMemoryHardLimit: resolvedOverrideMemoryHardLimit,
-    appliedMemoryHardLimit: resolvedAppliedMemoryHardLimit
+    graphMemoryAllocation: graphMemoryAllocationTotal,
+    taskDefinitionSoftLimit: hasTaskDefinitionSoftLimit ? taskDefinitionSoftLimitTotal : null,
+    taskDefinitionHardLimit: hasTaskDefinitionHardLimit ? taskDefinitionHardLimitTotal : null,
+    overrideSoftLimit: hasOverrideSoftLimit ? overrideSoftLimitTotal : null,
+    overrideHardLimit: hasOverrideHardLimit ? overrideHardLimitTotal : null
   };
 }
 
@@ -238,15 +220,16 @@ function taskResourceAllocations(task, resourceType) {
   if (resourceType == ResourceEnum.MEMORY) {
     const memoryAllocation = taskMemoryAllocationBreakdown(task);
     return {
-      graphResourceAllocation: memoryAllocation.appliedMemoryReservation,
-      taskDefinitionResourceAllocation: memoryAllocation.taskDefinitionMemoryReservation,
-      appliedResourceAllocation: memoryAllocation.appliedMemoryReservation,
-      taskDefinitionMemoryReservationAllocation: memoryAllocation.taskDefinitionMemoryReservation,
-      overrideMemoryReservationAllocation: memoryAllocation.overrideMemoryReservation,
-      appliedMemoryReservationAllocation: memoryAllocation.appliedMemoryReservation,
-      taskDefinitionMemoryHardLimitAllocation: memoryAllocation.taskDefinitionMemoryHardLimit,
-      overrideMemoryHardLimitAllocation: memoryAllocation.overrideMemoryHardLimit,
-      appliedMemoryHardLimitAllocation: memoryAllocation.appliedMemoryHardLimit
+      graphResourceAllocation: memoryAllocation.graphMemoryAllocation,
+      taskDefinitionResourceAllocation: firstNumericValue(
+        [memoryAllocation.taskDefinitionSoftLimit, memoryAllocation.taskDefinitionHardLimit],
+        0
+      ),
+      appliedResourceAllocation: memoryAllocation.graphMemoryAllocation,
+      taskDefinitionSoftLimitAllocation: memoryAllocation.taskDefinitionSoftLimit,
+      taskDefinitionHardLimitAllocation: memoryAllocation.taskDefinitionHardLimit,
+      overrideSoftLimitAllocation: memoryAllocation.overrideSoftLimit,
+      overrideHardLimitAllocation: memoryAllocation.overrideHardLimit
     };
   }
 
@@ -256,12 +239,10 @@ function taskResourceAllocations(task, resourceType) {
     graphResourceAllocation: appliedResourceAllocation,
     taskDefinitionResourceAllocation: taskDefinitionResourceAllocation,
     appliedResourceAllocation: appliedResourceAllocation,
-    taskDefinitionMemoryReservationAllocation: null,
-    overrideMemoryReservationAllocation: null,
-    appliedMemoryReservationAllocation: null,
-    taskDefinitionMemoryHardLimitAllocation: null,
-    overrideMemoryHardLimitAllocation: null,
-    appliedMemoryHardLimitAllocation: null
+    taskDefinitionSoftLimitAllocation: null,
+    taskDefinitionHardLimitAllocation: null,
+    overrideSoftLimitAllocation: null,
+    overrideHardLimitAllocation: null
   };
 }
 
@@ -272,12 +253,10 @@ function formatTooltipResourceValue(resourceValue) {
 function taskTooltipText(d3Data, resourceType) {
   if (resourceType == ResourceEnum.MEMORY) {
     return d3Data.name
-      + "\nMemory Reservation (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionMemoryReservationAllocation)
-      + "\nMemory (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionMemoryHardLimitAllocation)
-      + "\nMemory Reservation (override): " + formatTooltipResourceValue(d3Data.overrideMemoryReservationAllocation)
-      + "\nMemory (override): " + formatTooltipResourceValue(d3Data.overrideMemoryHardLimitAllocation)
-      + "\nMemory Reservation (graph/applied): " + formatTooltipResourceValue(d3Data.appliedMemoryReservationAllocation)
-      + "\nMemory (applied): " + formatTooltipResourceValue(d3Data.appliedMemoryHardLimitAllocation);
+      + "\nSoft Limit (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionSoftLimitAllocation)
+      + "\nHard Limit (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionHardLimitAllocation)
+      + "\nSoft Limit Override: " + formatTooltipResourceValue(d3Data.overrideSoftLimitAllocation)
+      + "\nHard Limit Override: " + formatTooltipResourceValue(d3Data.overrideHardLimitAllocation);
   }
 
   return d3Data.name
@@ -293,12 +272,10 @@ function addD3DataToTask(task, resourceType, y0) {
     graphResourceAllocation: taskAllocations.graphResourceAllocation,
     taskDefinitionResourceAllocation: taskAllocations.taskDefinitionResourceAllocation,
     appliedResourceAllocation: taskAllocations.appliedResourceAllocation,
-    taskDefinitionMemoryReservationAllocation: taskAllocations.taskDefinitionMemoryReservationAllocation,
-    overrideMemoryReservationAllocation: taskAllocations.overrideMemoryReservationAllocation,
-    appliedMemoryReservationAllocation: taskAllocations.appliedMemoryReservationAllocation,
-    taskDefinitionMemoryHardLimitAllocation: taskAllocations.taskDefinitionMemoryHardLimitAllocation,
-    overrideMemoryHardLimitAllocation: taskAllocations.overrideMemoryHardLimitAllocation,
-    appliedMemoryHardLimitAllocation: taskAllocations.appliedMemoryHardLimitAllocation,
+    taskDefinitionSoftLimitAllocation: taskAllocations.taskDefinitionSoftLimitAllocation,
+    taskDefinitionHardLimitAllocation: taskAllocations.taskDefinitionHardLimitAllocation,
+    overrideSoftLimitAllocation: taskAllocations.overrideSoftLimitAllocation,
+    overrideHardLimitAllocation: taskAllocations.overrideHardLimitAllocation,
     y0: y0,
     y1: y1
   };
