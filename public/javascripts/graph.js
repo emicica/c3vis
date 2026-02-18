@@ -3,17 +3,20 @@
 /**
  * @typedef {Object} EcsTaskDefinition
  * @property {string} [family]
- * @property {Array<{cpu:number, memory:number}>} [containerDefinitions]
+ * @property {Array<{name:string,cpu:number|string, memory:number|string, memoryReservation:number|string}>} [containerDefinitions]
  * @property {string} [taskDefinitionArn]
  */
 
 /**
  * @typedef {Object} EcsTask
  * @property {string} [group]
+ * @property {number|string} [cpu]
+ * @property {number|string} [memory]
+ * @property {{containerOverrides:Array<{name:string,cpu:number|string,memory:number|string,memoryReservation:number|string}>}} [overrides]
  * @property {string} [taskDefinitionArn]
  * @property {EcsTaskDefinition} [taskDefinition]
  * @property {string} [serviceName]
- * @property {{name:string, resourceAllocation:number, y0:number, y1:number}} [d3Data]
+ * @property {{name:string, graphResourceAllocation:number, taskDefinitionResourceAllocation:number, runtimeResourceAllocation:number, taskDefinitionReservedMemoryAllocation:number|null, runtimeReservedMemoryAllocation:number|null, taskDefinitionHardLimitMemoryAllocation:number|null, runtimeHardLimitMemoryAllocation:number|null, y0:number, y1:number}} [d3Data]
  */
 
 /**
@@ -106,14 +109,172 @@ function copyToClipboard(text) {
   }
 }
 
-function addD3DataToTask(task, resourceType, y0) {
-  const resourceAllocation = task.taskDefinition.containerDefinitions.reduce(function (sum, b) {
-    return sum + (resourceType == ResourceEnum.MEMORY ? b.memory : b.cpu);
+function parseNumericResource(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstNumericValue(values, fallbackValue) {
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] !== null) {
+      return values[i];
+    }
+  }
+  return fallbackValue;
+}
+
+function taskContainerOverridesByName(task) {
+  return (((task || {}).overrides || {}).containerOverrides || []).reduce(function (acc, containerOverride) {
+    if (containerOverride && containerOverride.name) {
+      acc[containerOverride.name] = containerOverride;
+    }
+    return acc;
+  }, {});
+}
+
+function taskDefinitionContainerResourceTotal(task, resourceType) {
+  const containerDefinitions = ((task || {}).taskDefinition || {}).containerDefinitions || [];
+  return containerDefinitions.reduce(function (sum, containerDefinition) {
+    const taskDefValue = parseNumericResource(resourceType == ResourceEnum.MEMORY ? containerDefinition.memory : containerDefinition.cpu);
+    return sum + (taskDefValue !== null ? taskDefValue : 0);
   }, 0);
-  const y1 = y0 + resourceAllocation;
+}
+
+function runtimeContainerResourceTotal(task, resourceType) {
+  const containerDefinitions = ((task || {}).taskDefinition || {}).containerDefinitions || [];
+  const overridesByContainerName = taskContainerOverridesByName(task);
+  return containerDefinitions.reduce(function (sum, containerDefinition) {
+    const taskDefValue = parseNumericResource(resourceType == ResourceEnum.MEMORY ? containerDefinition.memory : containerDefinition.cpu);
+    const containerOverride = overridesByContainerName[containerDefinition.name] || {};
+    const overrideValue = parseNumericResource(resourceType == ResourceEnum.MEMORY ? containerOverride.memory : containerOverride.cpu);
+    return sum + firstNumericValue([overrideValue, taskDefValue], 0);
+  }, 0);
+}
+
+function runtimeTaskResourceAllocation(task, resourceType) {
+  // Prefer runtime allocation from DescribeTasks if present.
+  const taskLevelAllocation = parseNumericResource(resourceType == ResourceEnum.MEMORY ? (task || {}).memory : (task || {}).cpu);
+  if (taskLevelAllocation !== null) {
+    return taskLevelAllocation;
+  }
+  return runtimeContainerResourceTotal(task, resourceType);
+}
+
+function taskMemoryAllocationBreakdown(task) {
+  const containerDefinitions = ((task || {}).taskDefinition || {}).containerDefinitions || [];
+  const overridesByContainerName = taskContainerOverridesByName(task);
+  const taskLevelRuntimeHardLimit = parseNumericResource((task || {}).memory);
+  let taskDefinitionReservedMemory = 0;
+  let runtimeReservedMemory = 0;
+  let taskDefinitionHardLimitMemory = 0;
+  let runtimeHardLimitFromContainers = 0;
+  let hasTaskDefinitionHardLimitMemory = false;
+  let hasRuntimeHardLimitMemory = false;
+
+  containerDefinitions.forEach(function (containerDefinition) {
+    const containerOverride = overridesByContainerName[containerDefinition.name] || {};
+    const taskDefinitionMemoryReservation = parseNumericResource(containerDefinition.memoryReservation);
+    const taskDefinitionMemoryHardLimit = parseNumericResource(containerDefinition.memory);
+    const overrideMemoryReservation = parseNumericResource(containerOverride.memoryReservation);
+    const overrideMemoryHardLimit = parseNumericResource(containerOverride.memory);
+    const taskDefinitionReservedForContainer = firstNumericValue(
+      [taskDefinitionMemoryReservation, taskDefinitionMemoryHardLimit],
+      0
+    );
+    const runtimeReservedForContainer = firstNumericValue(
+      [overrideMemoryReservation, taskDefinitionMemoryReservation, overrideMemoryHardLimit, taskDefinitionMemoryHardLimit],
+      0
+    );
+    const taskDefinitionHardLimitForContainer = firstNumericValue([taskDefinitionMemoryHardLimit], null);
+    const runtimeHardLimitForContainer = firstNumericValue([overrideMemoryHardLimit, taskDefinitionMemoryHardLimit], null);
+
+    taskDefinitionReservedMemory += taskDefinitionReservedForContainer;
+    runtimeReservedMemory += runtimeReservedForContainer;
+
+    if (taskDefinitionHardLimitForContainer !== null) {
+      taskDefinitionHardLimitMemory += taskDefinitionHardLimitForContainer;
+      hasTaskDefinitionHardLimitMemory = true;
+    }
+    if (runtimeHardLimitForContainer !== null) {
+      runtimeHardLimitFromContainers += runtimeHardLimitForContainer;
+      hasRuntimeHardLimitMemory = true;
+    }
+  });
+
+  const resolvedRuntimeReservedMemory =
+    containerDefinitions.length > 0 ? runtimeReservedMemory : firstNumericValue([taskLevelRuntimeHardLimit], 0);
+  const resolvedRuntimeHardLimitMemory = taskLevelRuntimeHardLimit !== null
+    ? taskLevelRuntimeHardLimit
+    : (hasRuntimeHardLimitMemory ? runtimeHardLimitFromContainers : null);
+
+  return {
+    taskDefinitionReservedMemory: taskDefinitionReservedMemory,
+    runtimeReservedMemory: resolvedRuntimeReservedMemory,
+    taskDefinitionHardLimitMemory: hasTaskDefinitionHardLimitMemory ? taskDefinitionHardLimitMemory : null,
+    runtimeHardLimitMemory: resolvedRuntimeHardLimitMemory
+  };
+}
+
+function taskResourceAllocations(task, resourceType) {
+  if (resourceType == ResourceEnum.MEMORY) {
+    const memoryAllocation = taskMemoryAllocationBreakdown(task);
+    return {
+      graphResourceAllocation: memoryAllocation.runtimeReservedMemory,
+      taskDefinitionResourceAllocation: memoryAllocation.taskDefinitionReservedMemory,
+      runtimeResourceAllocation: memoryAllocation.runtimeReservedMemory,
+      taskDefinitionReservedMemoryAllocation: memoryAllocation.taskDefinitionReservedMemory,
+      runtimeReservedMemoryAllocation: memoryAllocation.runtimeReservedMemory,
+      taskDefinitionHardLimitMemoryAllocation: memoryAllocation.taskDefinitionHardLimitMemory,
+      runtimeHardLimitMemoryAllocation: memoryAllocation.runtimeHardLimitMemory
+    };
+  }
+
+  const taskDefinitionResourceAllocation = taskDefinitionContainerResourceTotal(task, resourceType);
+  const runtimeResourceAllocation = runtimeTaskResourceAllocation(task, resourceType);
+  return {
+    graphResourceAllocation: runtimeResourceAllocation,
+    taskDefinitionResourceAllocation: taskDefinitionResourceAllocation,
+    runtimeResourceAllocation: runtimeResourceAllocation,
+    taskDefinitionReservedMemoryAllocation: null,
+    runtimeReservedMemoryAllocation: null,
+    taskDefinitionHardLimitMemoryAllocation: null,
+    runtimeHardLimitMemoryAllocation: null
+  };
+}
+
+function formatTooltipResourceValue(resourceValue) {
+  return resourceValue === null || resourceValue === undefined ? "n/a" : resourceValue;
+}
+
+function taskTooltipText(d3Data, resourceType) {
+  if (resourceType == ResourceEnum.MEMORY) {
+    return d3Data.name
+      + "\nReserved Memory (graph): " + formatTooltipResourceValue(d3Data.runtimeReservedMemoryAllocation)
+      + "\nHard Limit Memory (runtime): " + formatTooltipResourceValue(d3Data.runtimeHardLimitMemoryAllocation)
+      + "\nReserved Memory (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionReservedMemoryAllocation)
+      + "\nHard Limit Memory (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionHardLimitMemoryAllocation);
+  }
+
+  return d3Data.name
+    + "\nRuntime " + resourceLabel(resourceType) + ": " + formatTooltipResourceValue(d3Data.runtimeResourceAllocation)
+    + "\nTask Definition " + resourceLabel(resourceType) + ": " + formatTooltipResourceValue(d3Data.taskDefinitionResourceAllocation);
+}
+
+function addD3DataToTask(task, resourceType, y0) {
+  const taskAllocations = taskResourceAllocations(task, resourceType);
+  const y1 = y0 + taskAllocations.graphResourceAllocation;
   task.d3Data = {
     name: taskFamilyAndRevision(task),
-    resourceAllocation: resourceAllocation, // sum of all containers' resource (memory/cpu) allocation
+    graphResourceAllocation: taskAllocations.graphResourceAllocation,
+    taskDefinitionResourceAllocation: taskAllocations.taskDefinitionResourceAllocation,
+    runtimeResourceAllocation: taskAllocations.runtimeResourceAllocation,
+    taskDefinitionReservedMemoryAllocation: taskAllocations.taskDefinitionReservedMemoryAllocation,
+    runtimeReservedMemoryAllocation: taskAllocations.runtimeReservedMemoryAllocation,
+    taskDefinitionHardLimitMemoryAllocation: taskAllocations.taskDefinitionHardLimitMemoryAllocation,
+    runtimeHardLimitMemoryAllocation: taskAllocations.runtimeHardLimitMemoryAllocation,
     y0: y0,
     y1: y1
   };
@@ -399,7 +560,7 @@ function renderGraph(timestampDivId, chartDivId, legendDivId, cluster, resourceT
         // Use name as hover tooltip
         .append("svg:title")
         .text(function (d) {
-          return d.d3Data.name + "  (" + resourceLabel(resourceType) + ": " + d.d3Data.resourceAllocation + ")";
+          return taskTooltipText(d.d3Data, resourceType);
         });
 
       // Render ASG grouping overlays after tasks so the tint is visible
