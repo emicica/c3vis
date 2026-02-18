@@ -16,7 +16,7 @@
  * @property {string} [taskDefinitionArn]
  * @property {EcsTaskDefinition} [taskDefinition]
  * @property {string} [serviceName]
- * @property {{name:string, graphResourceAllocation:number, taskDefinitionResourceAllocation:number, runtimeResourceAllocation:number, taskDefinitionReservedMemoryAllocation:number|null, runtimeReservedMemoryAllocation:number|null, taskDefinitionHardLimitMemoryAllocation:number|null, runtimeHardLimitMemoryAllocation:number|null, y0:number, y1:number}} [d3Data]
+ * @property {{name:string, graphResourceAllocation:number, taskDefinitionResourceAllocation:number, appliedResourceAllocation:number, taskDefinitionMemoryReservationAllocation:number|null, overrideMemoryReservationAllocation:number|null, appliedMemoryReservationAllocation:number|null, taskDefinitionMemoryHardLimitAllocation:number|null, overrideMemoryHardLimitAllocation:number|null, appliedMemoryHardLimitAllocation:number|null, y0:number, y1:number}} [d3Data]
  */
 
 /**
@@ -154,8 +154,8 @@ function runtimeContainerResourceTotal(task, resourceType) {
   }, 0);
 }
 
-function runtimeTaskResourceAllocation(task, resourceType) {
-  // Prefer runtime allocation from DescribeTasks if present.
+function appliedTaskResourceAllocation(task, resourceType) {
+  // Prefer running task allocation from DescribeTasks if present.
   const taskLevelAllocation = parseNumericResource(resourceType == ResourceEnum.MEMORY ? (task || {}).memory : (task || {}).cpu);
   if (taskLevelAllocation !== null) {
     return taskLevelAllocation;
@@ -166,55 +166,71 @@ function runtimeTaskResourceAllocation(task, resourceType) {
 function taskMemoryAllocationBreakdown(task) {
   const containerDefinitions = ((task || {}).taskDefinition || {}).containerDefinitions || [];
   const overridesByContainerName = taskContainerOverridesByName(task);
-  const taskLevelRuntimeHardLimit = parseNumericResource((task || {}).memory);
-  let taskDefinitionReservedMemory = 0;
-  let runtimeReservedMemory = 0;
-  let taskDefinitionHardLimitMemory = 0;
-  let runtimeHardLimitFromContainers = 0;
-  let hasTaskDefinitionHardLimitMemory = false;
-  let hasRuntimeHardLimitMemory = false;
+  const taskLevelMemoryOverride = parseNumericResource((task || {}).memory);
+  let taskDefinitionMemoryReservationTotal = 0;
+  let appliedMemoryReservationTotal = 0;
+  let overrideMemoryReservationTotal = 0;
+  let taskDefinitionMemoryHardLimitTotal = 0;
+  let appliedMemoryHardLimitFromContainers = 0;
+  let overrideMemoryHardLimitFromContainers = 0;
+  let hasTaskDefinitionMemoryHardLimit = false;
+  let hasAppliedMemoryHardLimitFromContainers = false;
+  let hasOverrideMemoryReservation = false;
+  let hasOverrideMemoryHardLimitFromContainers = false;
 
   containerDefinitions.forEach(function (containerDefinition) {
     const containerOverride = overridesByContainerName[containerDefinition.name] || {};
-    const taskDefinitionMemoryReservation = parseNumericResource(containerDefinition.memoryReservation);
-    const taskDefinitionMemoryHardLimit = parseNumericResource(containerDefinition.memory);
-    const overrideMemoryReservation = parseNumericResource(containerOverride.memoryReservation);
-    const overrideMemoryHardLimit = parseNumericResource(containerOverride.memory);
-    const taskDefinitionReservedForContainer = firstNumericValue(
-      [taskDefinitionMemoryReservation, taskDefinitionMemoryHardLimit],
+    const containerTaskDefinitionMemoryReservation = parseNumericResource(containerDefinition.memoryReservation);
+    const containerTaskDefinitionMemoryHardLimit = parseNumericResource(containerDefinition.memory);
+    const containerOverrideMemoryReservation = parseNumericResource(containerOverride.memoryReservation);
+    const containerOverrideMemoryHardLimit = parseNumericResource(containerOverride.memory);
+    const taskDefinitionMemoryReservationForContainer = firstNumericValue(
+      [containerTaskDefinitionMemoryReservation, containerTaskDefinitionMemoryHardLimit],
       0
     );
-    const runtimeReservedForContainer = firstNumericValue(
-      [overrideMemoryReservation, taskDefinitionMemoryReservation, overrideMemoryHardLimit, taskDefinitionMemoryHardLimit],
+    const appliedMemoryReservationForContainer = firstNumericValue(
+      [containerOverrideMemoryReservation, containerTaskDefinitionMemoryReservation, containerOverrideMemoryHardLimit, containerTaskDefinitionMemoryHardLimit],
       0
     );
-    const taskDefinitionHardLimitForContainer = firstNumericValue([taskDefinitionMemoryHardLimit], null);
-    const runtimeHardLimitForContainer = firstNumericValue([overrideMemoryHardLimit, taskDefinitionMemoryHardLimit], null);
+    const taskDefinitionMemoryHardLimitForContainer = firstNumericValue([containerTaskDefinitionMemoryHardLimit], null);
+    const appliedMemoryHardLimitForContainer = firstNumericValue([containerOverrideMemoryHardLimit, containerTaskDefinitionMemoryHardLimit], null);
 
-    taskDefinitionReservedMemory += taskDefinitionReservedForContainer;
-    runtimeReservedMemory += runtimeReservedForContainer;
-
-    if (taskDefinitionHardLimitForContainer !== null) {
-      taskDefinitionHardLimitMemory += taskDefinitionHardLimitForContainer;
-      hasTaskDefinitionHardLimitMemory = true;
+    taskDefinitionMemoryReservationTotal += taskDefinitionMemoryReservationForContainer;
+    appliedMemoryReservationTotal += appliedMemoryReservationForContainer;
+    if (containerOverrideMemoryReservation !== null) {
+      overrideMemoryReservationTotal += containerOverrideMemoryReservation;
+      hasOverrideMemoryReservation = true;
     }
-    if (runtimeHardLimitForContainer !== null) {
-      runtimeHardLimitFromContainers += runtimeHardLimitForContainer;
-      hasRuntimeHardLimitMemory = true;
+    if (containerOverrideMemoryHardLimit !== null) {
+      overrideMemoryHardLimitFromContainers += containerOverrideMemoryHardLimit;
+      hasOverrideMemoryHardLimitFromContainers = true;
+    }
+
+    if (taskDefinitionMemoryHardLimitForContainer !== null) {
+      taskDefinitionMemoryHardLimitTotal += taskDefinitionMemoryHardLimitForContainer;
+      hasTaskDefinitionMemoryHardLimit = true;
+    }
+    if (appliedMemoryHardLimitForContainer !== null) {
+      appliedMemoryHardLimitFromContainers += appliedMemoryHardLimitForContainer;
+      hasAppliedMemoryHardLimitFromContainers = true;
     }
   });
 
-  const resolvedRuntimeReservedMemory =
-    containerDefinitions.length > 0 ? runtimeReservedMemory : firstNumericValue([taskLevelRuntimeHardLimit], 0);
-  const resolvedRuntimeHardLimitMemory = taskLevelRuntimeHardLimit !== null
-    ? taskLevelRuntimeHardLimit
-    : (hasRuntimeHardLimitMemory ? runtimeHardLimitFromContainers : null);
+  const resolvedAppliedMemoryReservation =
+    containerDefinitions.length > 0 ? appliedMemoryReservationTotal : firstNumericValue([taskLevelMemoryOverride], 0);
+  const resolvedAppliedMemoryHardLimit = taskLevelMemoryOverride !== null
+    ? taskLevelMemoryOverride
+    : (hasAppliedMemoryHardLimitFromContainers ? appliedMemoryHardLimitFromContainers : null);
+  const resolvedOverrideMemoryHardLimit =
+    hasOverrideMemoryHardLimitFromContainers ? overrideMemoryHardLimitFromContainers : null;
 
   return {
-    taskDefinitionReservedMemory: taskDefinitionReservedMemory,
-    runtimeReservedMemory: resolvedRuntimeReservedMemory,
-    taskDefinitionHardLimitMemory: hasTaskDefinitionHardLimitMemory ? taskDefinitionHardLimitMemory : null,
-    runtimeHardLimitMemory: resolvedRuntimeHardLimitMemory
+    taskDefinitionMemoryReservation: taskDefinitionMemoryReservationTotal,
+    overrideMemoryReservation: hasOverrideMemoryReservation ? overrideMemoryReservationTotal : null,
+    appliedMemoryReservation: resolvedAppliedMemoryReservation,
+    taskDefinitionMemoryHardLimit: hasTaskDefinitionMemoryHardLimit ? taskDefinitionMemoryHardLimitTotal : null,
+    overrideMemoryHardLimit: resolvedOverrideMemoryHardLimit,
+    appliedMemoryHardLimit: resolvedAppliedMemoryHardLimit
   };
 }
 
@@ -222,26 +238,30 @@ function taskResourceAllocations(task, resourceType) {
   if (resourceType == ResourceEnum.MEMORY) {
     const memoryAllocation = taskMemoryAllocationBreakdown(task);
     return {
-      graphResourceAllocation: memoryAllocation.runtimeReservedMemory,
-      taskDefinitionResourceAllocation: memoryAllocation.taskDefinitionReservedMemory,
-      runtimeResourceAllocation: memoryAllocation.runtimeReservedMemory,
-      taskDefinitionReservedMemoryAllocation: memoryAllocation.taskDefinitionReservedMemory,
-      runtimeReservedMemoryAllocation: memoryAllocation.runtimeReservedMemory,
-      taskDefinitionHardLimitMemoryAllocation: memoryAllocation.taskDefinitionHardLimitMemory,
-      runtimeHardLimitMemoryAllocation: memoryAllocation.runtimeHardLimitMemory
+      graphResourceAllocation: memoryAllocation.appliedMemoryReservation,
+      taskDefinitionResourceAllocation: memoryAllocation.taskDefinitionMemoryReservation,
+      appliedResourceAllocation: memoryAllocation.appliedMemoryReservation,
+      taskDefinitionMemoryReservationAllocation: memoryAllocation.taskDefinitionMemoryReservation,
+      overrideMemoryReservationAllocation: memoryAllocation.overrideMemoryReservation,
+      appliedMemoryReservationAllocation: memoryAllocation.appliedMemoryReservation,
+      taskDefinitionMemoryHardLimitAllocation: memoryAllocation.taskDefinitionMemoryHardLimit,
+      overrideMemoryHardLimitAllocation: memoryAllocation.overrideMemoryHardLimit,
+      appliedMemoryHardLimitAllocation: memoryAllocation.appliedMemoryHardLimit
     };
   }
 
   const taskDefinitionResourceAllocation = taskDefinitionContainerResourceTotal(task, resourceType);
-  const runtimeResourceAllocation = runtimeTaskResourceAllocation(task, resourceType);
+  const appliedResourceAllocation = appliedTaskResourceAllocation(task, resourceType);
   return {
-    graphResourceAllocation: runtimeResourceAllocation,
+    graphResourceAllocation: appliedResourceAllocation,
     taskDefinitionResourceAllocation: taskDefinitionResourceAllocation,
-    runtimeResourceAllocation: runtimeResourceAllocation,
-    taskDefinitionReservedMemoryAllocation: null,
-    runtimeReservedMemoryAllocation: null,
-    taskDefinitionHardLimitMemoryAllocation: null,
-    runtimeHardLimitMemoryAllocation: null
+    appliedResourceAllocation: appliedResourceAllocation,
+    taskDefinitionMemoryReservationAllocation: null,
+    overrideMemoryReservationAllocation: null,
+    appliedMemoryReservationAllocation: null,
+    taskDefinitionMemoryHardLimitAllocation: null,
+    overrideMemoryHardLimitAllocation: null,
+    appliedMemoryHardLimitAllocation: null
   };
 }
 
@@ -252,14 +272,16 @@ function formatTooltipResourceValue(resourceValue) {
 function taskTooltipText(d3Data, resourceType) {
   if (resourceType == ResourceEnum.MEMORY) {
     return d3Data.name
-      + "\nReserved Memory (graph): " + formatTooltipResourceValue(d3Data.runtimeReservedMemoryAllocation)
-      + "\nHard Limit Memory (runtime): " + formatTooltipResourceValue(d3Data.runtimeHardLimitMemoryAllocation)
-      + "\nReserved Memory (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionReservedMemoryAllocation)
-      + "\nHard Limit Memory (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionHardLimitMemoryAllocation);
+      + "\nMemory Reservation (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionMemoryReservationAllocation)
+      + "\nMemory (task def): " + formatTooltipResourceValue(d3Data.taskDefinitionMemoryHardLimitAllocation)
+      + "\nMemory Reservation (override): " + formatTooltipResourceValue(d3Data.overrideMemoryReservationAllocation)
+      + "\nMemory (override): " + formatTooltipResourceValue(d3Data.overrideMemoryHardLimitAllocation)
+      + "\nMemory Reservation (graph/applied): " + formatTooltipResourceValue(d3Data.appliedMemoryReservationAllocation)
+      + "\nMemory (applied): " + formatTooltipResourceValue(d3Data.appliedMemoryHardLimitAllocation);
   }
 
   return d3Data.name
-    + "\nRuntime " + resourceLabel(resourceType) + ": " + formatTooltipResourceValue(d3Data.runtimeResourceAllocation)
+    + "\nApplied " + resourceLabel(resourceType) + ": " + formatTooltipResourceValue(d3Data.appliedResourceAllocation)
     + "\nTask Definition " + resourceLabel(resourceType) + ": " + formatTooltipResourceValue(d3Data.taskDefinitionResourceAllocation);
 }
 
@@ -270,11 +292,13 @@ function addD3DataToTask(task, resourceType, y0) {
     name: taskFamilyAndRevision(task),
     graphResourceAllocation: taskAllocations.graphResourceAllocation,
     taskDefinitionResourceAllocation: taskAllocations.taskDefinitionResourceAllocation,
-    runtimeResourceAllocation: taskAllocations.runtimeResourceAllocation,
-    taskDefinitionReservedMemoryAllocation: taskAllocations.taskDefinitionReservedMemoryAllocation,
-    runtimeReservedMemoryAllocation: taskAllocations.runtimeReservedMemoryAllocation,
-    taskDefinitionHardLimitMemoryAllocation: taskAllocations.taskDefinitionHardLimitMemoryAllocation,
-    runtimeHardLimitMemoryAllocation: taskAllocations.runtimeHardLimitMemoryAllocation,
+    appliedResourceAllocation: taskAllocations.appliedResourceAllocation,
+    taskDefinitionMemoryReservationAllocation: taskAllocations.taskDefinitionMemoryReservationAllocation,
+    overrideMemoryReservationAllocation: taskAllocations.overrideMemoryReservationAllocation,
+    appliedMemoryReservationAllocation: taskAllocations.appliedMemoryReservationAllocation,
+    taskDefinitionMemoryHardLimitAllocation: taskAllocations.taskDefinitionMemoryHardLimitAllocation,
+    overrideMemoryHardLimitAllocation: taskAllocations.overrideMemoryHardLimitAllocation,
+    appliedMemoryHardLimitAllocation: taskAllocations.appliedMemoryHardLimitAllocation,
     y0: y0,
     y1: y1
   };
