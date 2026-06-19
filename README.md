@@ -27,7 +27,7 @@ on configuring the AWS SDK for server-side AWS connectivity.
 
 ## Requirements
 
-Node >= 20 (Node 22 recommended)
+Node >= 22 (Node 24 recommended)
 
 ## Building and Running
 

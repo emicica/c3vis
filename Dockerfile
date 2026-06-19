@@ -7,7 +7,7 @@ RUN npm ci --omit=dev
 COPY . .
 
 # ---- runtime stage (distroless) ----
-FROM --platform=linux/amd64 gcr.io/distroless/nodejs24-debian12:nonroot
+FROM --platform=linux/amd64 gcr.io/distroless/nodejs24-debian13:nonroot
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --chown=nonroot:nonroot --from=build /app /app
